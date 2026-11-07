@@ -1,0 +1,52 @@
+# Render Blueprint: one free web service (gateway + web app), free Postgres,
+# free Key Value (Redis-compatible). In Render: New → Blueprint → this repo.
+services:
+  - type: web
+    name: courier
+    runtime: node
+    plan: free
+    # Dev dependencies (tsup, vite, typescript) are needed to build.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node packages/server/dist/main.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: NODE_ID
+        value: render-1
+      - key: STATIC_DIR
+        value: apps/web/dist
+      # Demo login (username only) so visitors can try it. Replace with a real
+      # identity provider before using this for anything beyond a demo.
+      - key: ALLOW_DEV_LOGIN
+        value: "true"
+      # Only pages served by this service may open sockets.
+      - key: ALLOWED_ORIGINS
+        value: self
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: courier-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: courier-kv
+          property: connectionString
+
+  - type: keyvalue
+    name: courier-kv
+    plan: free
+    # Internal connections only.
+    ipAllowList: []
+    # Presence keys must not be evicted silently.
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: courier-db
+    plan: free
+    databaseName: courier
+    user: courier

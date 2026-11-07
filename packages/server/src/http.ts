@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import fastifyStatic from "@fastify/static";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { Auth, type Principal } from "./auth.js";
@@ -127,4 +130,22 @@ export function registerHttp(gw: Gateway): void {
       .parse(req.query);
     return gw.repo.messagesBefore(id, req.principal!.userId, q.before ?? null, q.limit);
   });
+
+  // ------------------------------------------------------------ web app
+
+  if (gw.config.staticDir) {
+    const root = resolve(gw.config.staticDir);
+    if (!existsSync(resolve(root, "index.html"))) {
+      gw.log.warn({ root }, "STATIC_DIR has no index.html; not serving the web app");
+      return;
+    }
+    void app.register(fastifyStatic, { root, wildcard: false, index: ["index.html"] });
+    // Single-page app: unknown non-API GETs get index.html.
+    app.setNotFoundHandler((req, reply) => {
+      if (req.method === "GET" && !req.url.startsWith("/api/") && req.url !== "/ws") {
+        return reply.sendFile("index.html", root);
+      }
+      return reply.code(404).send({ error: "not found" });
+    });
+  }
 }

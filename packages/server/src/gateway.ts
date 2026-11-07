@@ -175,11 +175,25 @@ export class Gateway {
     // Browsers always send Origin; refusing unknown origins blocks cross-site
     // WebSocket hijacking. Non-browser clients still need a valid JWT.
     const origin = req.headers.origin;
-    if (origin && this.config.allowedOrigins.length && !this.config.allowedOrigins.includes(origin)) {
+    if (origin && !this.originAllowed(origin, req)) {
       this.metrics.disconnects.inc({ reason: "bad_origin" });
       return reject(403, "Forbidden");
     }
     this.wss.handleUpgrade(req, socket, head, (ws) => this.onConnection(ws, req));
+  }
+
+  private originAllowed(origin: string, req: IncomingMessage): boolean {
+    const allowed = this.config.allowedOrigins;
+    if (!allowed.length || allowed.includes(origin)) return true;
+    if (!allowed.includes("self")) return false;
+    let host: string;
+    try {
+      host = new URL(origin).host;
+    } catch {
+      return false;
+    }
+    const forwarded = (req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim();
+    return host === req.headers.host || host === forwarded;
   }
 
   private onConnection(ws: WebSocket, req: IncomingMessage): void {

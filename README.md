@@ -113,6 +113,8 @@ docker compose -f deploy/docker-compose.yml up --build
 # app http://localhost:8000 · grafana http://localhost:3000 · prometheus http://localhost:9090
 ```
 
+**Render (free tier):** `render.yaml` defines one web service that runs the gateway and serves the web app, plus free Postgres and Key Value (Redis-compatible). In Render choose **New → Blueprint** and pick this repo. Migrations run on boot. Free web services sleep when idle, so the first visit after a while takes up to a minute to wake; the client reconnects on its own once the service is up.
+
 **Local development** (needs Postgres 16 and Redis 7 running):
 
 ```bash
@@ -142,12 +144,13 @@ The load test exits non-zero if any client ends up with a missing, duplicated or
 | `DATABASE_URL` / `REDIS_URL` | local | |
 | `JWT_SECRET` | dev value (required in production, ≥32 chars) | |
 | `ALLOW_DEV_LOGIN` | `true` in dev, `false` in production | username-only demo login |
-| `ALLOWED_ORIGINS` | any | comma-separated browser origins |
+| `ALLOWED_ORIGINS` | any | comma-separated browser origins; `self` allows the gateway's own host |
 | `SEND_RATE_PER_SEC` / `SEND_BURST` | 10 / 30 | per-socket send budget (excess is delayed) |
 | `FRAME_RATE_PER_SEC` / `FRAME_BURST` | 50 / 200 | per-socket frame budget (excess disconnects) |
 | `HEARTBEAT_MS` | 25000 | ping interval; presence TTL is 3× this |
 | `MAX_BUFFERED_BYTES` | 1 MiB | slow-consumer threshold |
 | `DRAIN_WINDOW_MS` | 10000 | how long reconnects are spread over on shutdown |
+| `STATIC_DIR` | unset | serve the built web app from this directory (single-service deploys) |
 
 ## Using the SDK
 

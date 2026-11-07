@@ -1,7 +1,11 @@
 {
   "name": "courier",
   "private": true,
-  "workspaces": ["packages/*", "apps/*", "loadtest"],
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "loadtest"
+  ],
   "scripts": {
     "dev": "npm run dev -w @courier/server",
     "build": "npm run build -w @courier/server && npm run build -w @courier/web",
@@ -15,5 +19,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

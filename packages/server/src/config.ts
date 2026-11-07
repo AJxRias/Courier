@@ -12,8 +12,13 @@ export interface Config {
   tokenTtlSec: number;
   /** Enables POST /auth/dev-login (username-only login). Never enable in production. */
   allowDevLogin: boolean;
-  /** Browser origins allowed to open a socket. Empty = allow any. */
+  /**
+   * Browser origins allowed to open a socket. Empty = allow any. The special
+   * entry "self" allows pages served from the same host as the gateway.
+   */
   allowedOrigins: string[];
+  /** If set, serve the built web app from this directory (single-service deploys). */
+  staticDir: string | null;
   /** WebSocket ping interval; a socket that misses one pong is terminated. */
   heartbeatMs: number;
   /** Disconnect a client whose unsent buffer grows past this many bytes. */
@@ -55,7 +60,12 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     jwtSecret,
     tokenTtlSec: num("TOKEN_TTL_SEC", 15 * 60),
     allowDevLogin: (process.env.ALLOW_DEV_LOGIN ?? (isProd ? "false" : "true")) === "true",
-    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    allowedOrigins: [
+      ...(process.env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      // Render sets this to the service's public URL.
+      ...(process.env.RENDER_EXTERNAL_URL ? [process.env.RENDER_EXTERNAL_URL.replace(/\/$/, "")] : []),
+    ],
+    staticDir: process.env.STATIC_DIR ?? null,
     heartbeatMs: num("HEARTBEAT_MS", 25_000),
     maxBufferedBytes: num("MAX_BUFFERED_BYTES", 1024 * 1024),
     sendRatePerSec: num("SEND_RATE_PER_SEC", 10),

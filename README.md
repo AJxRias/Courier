@@ -6,6 +6,8 @@ A horizontally scalable real-time chat service with **exactly-once, in-order del
 
 ## Try it
 
+**Live demo: https://courier-uqen.onrender.com** (free hosting, so the first load after a quiet spell can take up to a minute while the server wakes).
+
 Open the app and click **Try it now**. You get a guest account with a guide bot and a demo room to talk in.
 
 - **Under the hood** (top right) shows every frame as it is sent and received: sequence numbers, acks, receipts, and gap repairs.

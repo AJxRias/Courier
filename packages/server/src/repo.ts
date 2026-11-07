@@ -39,24 +39,41 @@ export class Repo {
 
   // ------------------------------------------------------------------ users
 
-  async upsertUser(username: string): Promise<{ id: string; username: string }> {
+  /** Creates the user if needed; `created` is true only on first sign-in. */
+  async upsertUser(username: string, isBot = false): Promise<{ id: string; username: string; isBot: boolean; created: boolean }> {
     const { rows } = await this.db.query(
-      `INSERT INTO users (username) VALUES ($1)
-       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
-       RETURNING id, username`,
-      [username],
+      `INSERT INTO users (username, is_bot) VALUES ($1, $2)
+       ON CONFLICT (username) DO UPDATE SET is_bot = users.is_bot OR EXCLUDED.is_bot
+       RETURNING id, username, is_bot AS "isBot", (xmax = 0) AS created`,
+      [username, isBot],
     );
     return rows[0];
   }
 
-  async findUsersByName(usernames: string[]): Promise<{ id: string; username: string }[]> {
-    const { rows } = await this.db.query("SELECT id, username FROM users WHERE username = ANY($1)", [usernames]);
+  async isBotName(username: string): Promise<boolean> {
+    const { rows } = await this.db.query("SELECT is_bot FROM users WHERE username = $1", [username]);
+    return rows[0]?.is_bot === true;
+  }
+
+  /** Conversations both users belong to. */
+  async sharedConversations(a: string, b: string): Promise<{ id: string; kind: string; title: string | null }[]> {
+    const { rows } = await this.db.query(
+      `SELECT c.id, c.kind, c.title FROM conversations c
+         JOIN conversation_members ma ON ma.conversation_id = c.id AND ma.user_id = $1
+         JOIN conversation_members mb ON mb.conversation_id = c.id AND mb.user_id = $2`,
+      [a, b],
+    );
+    return rows;
+  }
+
+  async findUsersByName(usernames: string[]): Promise<{ id: string; username: string; isBot: boolean }[]> {
+    const { rows } = await this.db.query('SELECT id, username, is_bot AS "isBot" FROM users WHERE username = ANY($1)', [usernames]);
     return rows;
   }
 
   async searchUsers(prefix: string, limit = 10): Promise<{ id: string; username: string }[]> {
     const { rows } = await this.db.query(
-      "SELECT id, username FROM users WHERE username LIKE $1 ORDER BY username LIMIT $2",
+      "SELECT id, username FROM users WHERE username LIKE $1 AND NOT is_bot ORDER BY username LIMIT $2",
       [`${prefix.replace(/[%_\\]/g, "\\$&")}%`, limit],
     );
     return rows;
@@ -139,7 +156,7 @@ export class Repo {
   async listConversations(userId: string) {
     const { rows } = await this.db.query(
       `SELECT c.id, c.title, c.kind, c.last_seq, c.updated_at, m.read_seq,
-              (SELECT json_agg(json_build_object('id', u.id, 'username', u.username,
+              (SELECT json_agg(json_build_object('id', u.id, 'username', u.username, 'isBot', u.is_bot,
                                                  'readSeq', cm.read_seq, 'deliveredSeq', cm.delivered_seq) ORDER BY u.username)
                  FROM conversation_members cm JOIN users u ON u.id = cm.user_id
                 WHERE cm.conversation_id = c.id) AS members,

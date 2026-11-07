@@ -5,6 +5,6 @@ export default defineConfig({
   format: ["esm"],
   target: "node22",
   clean: true,
-  // The protocol package ships TypeScript source, so bundle it in.
-  noExternal: ["@courier/protocol"],
+  // Workspace packages ship TypeScript source, so bundle them in.
+  noExternal: ["@courier/protocol", "@courier/client"],
 });

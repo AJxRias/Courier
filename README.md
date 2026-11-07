@@ -2,7 +2,21 @@
 
 A horizontally scalable real-time chat service with **exactly-once, in-order delivery to the application**, built on top of an at-least-once transport. Gateways can crash, Redis can drop messages, and clients can go offline mid-send: every message still arrives once, in order, with no duplicates. Each of those failure modes has an automated test.
 
-![Courier web app showing sequence numbers and read receipts](docs/screenshot.png)
+![Courier: a 40-message burst arriving in order with 30% simulated packet loss, shown in the Under the hood panel](docs/screenshot.png)
+
+## Try it
+
+Open the app and click **Try it now**. You get a guest account with a guide bot and a demo room to talk in.
+
+- **Under the hood** (top right) shows every frame as it is sent and received: sequence numbers, acks, receipts, and gap repairs.
+- **Try to break it:**
+  - **Drop connection** forces a reconnect.
+  - **Go offline** lets you keep typing; queued messages go out on reconnect.
+  - **Lose 30% of incoming messages** and **Duplicate incoming messages** inject faults on your side.
+- Send the guide **`/burst 40`** with loss turned on: all 40 still arrive once, in order, and the log shows each repair.
+- **Open a second user** opens a new tab signed in as someone else, already in a chat with you.
+
+The bots are ordinary users that connect over the same WebSocket protocol with the same client SDK as the browser, so their typing, read receipts and replies all go through the real pipeline.
 
 **Stack:** TypeScript · Node.js 22 · WebSockets (`ws`) · PostgreSQL 16 · Redis 7 · React · Prometheus/Grafana · Docker · GitHub Actions
 
@@ -124,12 +138,12 @@ npm run dev                      # gateway on :8080 (runs migrations on boot)
 npm run dev -w @courier/web      # web app on :5173 (proxies /api and /ws)
 ```
 
-Open two browser windows and sign in as two different usernames. The **seq** toggle shows sequence numbers, and **Go offline** demonstrates the offline queue.
+Click **Try it now**, or use **Open a second user** to chat between two tabs. Set `DEMO_BOTS=true` to run the guide and demo-room bots.
 
 **Tests and load test:**
 
 ```bash
-npm test             # 39 tests: protocol, messaging, resilience/chaos, sequencer property tests
+npm test             # 43 tests: protocol, messaging, resilience/chaos, demo bots, sequencer property tests
 npm run typecheck
 npm run build -w @courier/server
 npm run loadtest -- --users 5000 --room-size 10 --rate 300 --duration 40 --spawn 2 --kill-at 20
@@ -151,6 +165,7 @@ The load test exits non-zero if any client ends up with a missing, duplicated or
 | `MAX_BUFFERED_BYTES` | 1 MiB | slow-consumer threshold |
 | `DRAIN_WINDOW_MS` | 10000 | how long reconnects are spread over on shutdown |
 | `STATIC_DIR` | unset | serve the built web app from this directory (single-service deploys) |
+| `DEMO_BOTS` | `false` | run the guide and demo-room bots on this gateway (one gateway only) |
 
 ## Using the SDK
 

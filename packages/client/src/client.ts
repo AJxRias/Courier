@@ -19,6 +19,37 @@ export type SocketFactory = new (url: string) => SocketLike;
 
 export type Status = "idle" | "connecting" | "authenticating" | "ready" | "offline" | "closed";
 
+/** Counters for observability (the demo app's "Under the hood" panel uses these). */
+export interface ClientStats {
+  /** Messages handed to the app. */
+  delivered: number;
+  /** Copies of already-delivered messages that were ignored. */
+  duplicatesIgnored: number;
+  /** Times the client asked the server to fill a gap. */
+  gapRepairs: number;
+  /** Sends transmitted again after a reconnect (the server dedupes them). */
+  resends: number;
+  /** Successful reconnects after the first connection. */
+  reconnects: number;
+  /** Incoming messages discarded by simulated packet loss. */
+  droppedSimulated: number;
+}
+
+/** Client-side fault injection, for demos and tests. Applies to live `message` frames only. */
+export interface Faults {
+  /** Probability (0-1) of discarding each incoming live message. */
+  dropRate?: number;
+  /** Process every incoming live message twice. */
+  duplicate?: boolean;
+}
+
+export interface FrameLogEntry {
+  dir: "in" | "out" | "drop";
+  /** The frame, with credentials redacted. */
+  frame: { t: string; [key: string]: unknown };
+  at: number;
+}
+
 export interface ChatClientOptions {
   /** One URL behind a load balancer, or several to rotate through on reconnect. */
   url: string | string[];
@@ -53,6 +84,8 @@ export interface ClientEvents extends Record<string, unknown[]> {
   joined: [cursor: ConversationCursor];
   rtt: [ms: number];
   error: [info: { code: ErrorCode; message: string }];
+  /** Every frame sent or received (auth token redacted), for inspectors and debugging. */
+  frame: [entry: FrameLogEntry];
 }
 
 type Outgoing = PendingSend;
@@ -91,6 +124,10 @@ export class ChatClient extends Emitter<ClientEvents> {
   private deliveredTimer?: ReturnType<typeof setTimeout>;
   private typingSentAt = new Map<string, number>();
   private saveTimer?: ReturnType<typeof setTimeout>;
+  private faults: Faults = {};
+  private attempted = new Set<string>();
+  private readyCount = 0;
+  private _stats: ClientStats = { delivered: 0, duplicatesIgnored: 0, gapRepairs: 0, resends: 0, reconnects: 0, droppedSimulated: 0 };
 
   constructor(private options: ChatClientOptions) {
     super();
@@ -195,6 +232,23 @@ export class ChatClient extends Emitter<ClientEvents> {
     return this.seq.cursor(conversationId);
   }
 
+  get stats(): ClientStats {
+    return { ...this._stats };
+  }
+
+  /** Turns simulated network faults on or off. */
+  setFaults(faults: Faults): void {
+    this.faults = { ...faults };
+  }
+
+  /** Simulates the network dropping: the socket closes and the client recovers on its own. */
+  dropConnection(): void {
+    if (!this.ws) return;
+    const ws = this.ws;
+    ws.close(CloseCode.Normal, "simulated network drop");
+    ws.onclose?.({ code: 1006, reason: "simulated network drop" });
+  }
+
   // ------------------------------------------------------------------ connection
 
   private open(): void {
@@ -216,6 +270,7 @@ export class ChatClient extends Emitter<ClientEvents> {
         const token = await this.options.getToken();
         if (this.ws !== ws || ws.readyState !== OPEN) return;
         ws.send(JSON.stringify({ t: "auth", token, deviceId: this.deviceId, v: PROTOCOL_VERSION }));
+        this.log("out", { t: "auth", deviceId: this.deviceId });
       } catch {
         ws.close(CloseCode.Normal, "token unavailable");
       }
@@ -230,6 +285,18 @@ export class ChatClient extends Emitter<ClientEvents> {
       } catch {
         return;
       }
+      if (frame.t === "message") {
+        if (this.faults.dropRate && Math.random() < this.faults.dropRate) {
+          this._stats.droppedSimulated++;
+          this.log("drop", frame);
+          return;
+        }
+        if (this.faults.duplicate) {
+          this.log("in", frame);
+          this.onFrame(frame);
+        }
+      }
+      this.log("in", frame);
       this.onFrame(frame);
     };
     ws.onclose = (ev) => {
@@ -325,6 +392,7 @@ export class ChatClient extends Emitter<ClientEvents> {
   }
 
   private onReady(f: Extract<ServerFrame, { t: "ready" }>): void {
+    if (this.readyCount++ > 0) this._stats.reconnects++;
     this.userId = f.userId;
     this.heartbeatMs = f.heartbeatMs;
     this.backoff.reset();
@@ -350,7 +418,8 @@ export class ChatClient extends Emitter<ClientEvents> {
     if (!this.seq.has(msg.conversationId)) {
       this.track({ conversationId: msg.conversationId, lastSeq: msg.seq, readSeq: 0 });
     }
-    if (this.seq.push(msg)) this.scheduleSave();
+    if (this.seq.seen(msg)) this._stats.duplicatesIgnored++;
+    else if (this.seq.push(msg)) this.scheduleSave();
     this.repair(msg.conversationId);
   }
 
@@ -387,6 +456,7 @@ export class ChatClient extends Emitter<ClientEvents> {
       }
     }, 10_000);
     this.syncing.set(conversationId, { reqId, timer });
+    this._stats.gapRepairs++;
     this.raw({ t: "sync", reqId, conversationId, afterSeq: this.seq.cursor(conversationId), limit: 200 });
   }
 
@@ -408,6 +478,7 @@ export class ChatClient extends Emitter<ClientEvents> {
     if (item) {
       this.outbox.delete(f.clientMsgId);
       this.inFlight.delete(f.clientMsgId);
+      this.attempted.delete(f.clientMsgId);
       this.scheduleSave();
       this.armAckTimer(true);
       this.pump();
@@ -462,6 +533,8 @@ export class ChatClient extends Emitter<ClientEvents> {
       if (this.inFlight.size >= this.opts.maxInFlight) break;
       if (this.inFlight.has(item.clientMsgId)) continue;
       this.inFlight.add(item.clientMsgId);
+      if (this.attempted.has(item.clientMsgId)) this._stats.resends++;
+      this.attempted.add(item.clientMsgId);
       this.raw({ t: "send", conversationId: item.conversationId, clientMsgId: item.clientMsgId, body: item.body });
     }
     this.armAckTimer(false);
@@ -485,6 +558,7 @@ export class ChatClient extends Emitter<ClientEvents> {
   }
 
   private onDeliver(msg: ChatMessage): void {
+    this._stats.delivered++;
     this.emit("message", msg);
     if (msg.senderId !== this.userId) {
       this.pendingDelivered.set(msg.conversationId, msg.seq);
@@ -502,8 +576,15 @@ export class ChatClient extends Emitter<ClientEvents> {
 
   // ------------------------------------------------------------------ helpers
 
-  private raw(frame: object): void {
-    if (this.ws?.readyState === OPEN && this._status === "ready") this.ws.send(JSON.stringify(frame));
+  private raw(frame: { t: string; [key: string]: unknown }): void {
+    if (this.ws?.readyState === OPEN && this._status === "ready") {
+      this.ws.send(JSON.stringify(frame));
+      this.log("out", frame);
+    }
+  }
+
+  private log(dir: FrameLogEntry["dir"], frame: object): void {
+    this.emit("frame", { dir, frame: frame as FrameLogEntry["frame"], at: Date.now() });
   }
 
   private setStatus(s: Status, detail?: ClientEvents["status"][1]): void {

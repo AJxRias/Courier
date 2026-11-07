@@ -45,7 +45,8 @@ services:
 
   gw1:
     <<: *gateway
-    environment: { <<: *gateway-env, NODE_ID: gw1 }
+    # Demo bots run on exactly one gateway.
+    environment: { <<: *gateway-env, NODE_ID: gw1, DEMO_BOTS: "true" }
 
   gw2:
     <<: *gateway

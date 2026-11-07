@@ -118,6 +118,36 @@ describe("resilience", () => {
     expect(b.byConv(conv)).toEqual(range(1, 6));
   });
 
+  it("delivers exactly once, in order, with 30% client-side loss and every message duplicated", async () => {
+    const { n1 } = await twoNodes();
+    const conv = await createConversation(n1, alice, [bob]);
+    const a = connectClient(n1.url, alice);
+    const b = connectClient(n1.url, bob);
+    await Promise.all([ready(a), ready(b)]);
+    b.client.setFaults({ dropRate: 0.3, duplicate: true });
+    for (let i = 1; i <= 100; i++) a.client.send(conv, `f${i}`);
+    await waitFor(() => b.byConv(conv).length === 100, 15_000);
+    expect(b.byConv(conv)).toEqual(range(1, 100));
+    const stats = b.client.stats;
+    expect(stats.droppedSimulated).toBeGreaterThan(0);
+    expect(stats.gapRepairs).toBeGreaterThan(0);
+    expect(stats.duplicatesIgnored).toBeGreaterThan(0);
+    expect(stats.delivered).toBe(100);
+  });
+
+  it("recovers from a simulated network drop and resends unacked messages", async () => {
+    const { n1 } = await twoNodes();
+    const conv = await createConversation(n1, alice, [bob]);
+    const a = connectClient(n1.url, alice);
+    const b = connectClient(n1.url, bob);
+    await Promise.all([ready(a), ready(b)]);
+    for (let i = 1; i <= 50; i++) a.client.send(conv, `d${i}`);
+    a.client.dropConnection();
+    await waitFor(() => b.byConv(conv).length === 50, 10_000);
+    expect(b.byConv(conv)).toEqual(range(1, 50));
+    expect(a.client.stats.reconnects).toBe(1);
+  });
+
   it("publishes from the outbox when the post-commit publish never happens", async () => {
     const n1 = await startNode({ nodeId: "n1" }, { skipFastPathPublish: true });
     [alice, bob] = await Promise.all([login(n1, "alice"), login(n1, "bob")]);

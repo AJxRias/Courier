@@ -56,6 +56,12 @@ export class Sequencer {
     return !!s && s.buffer.size > 0;
   }
 
+  /** True if this message was already delivered or is already buffered. */
+  seen(msg: ChatMessage): boolean {
+    const s = this.states.get(msg.conversationId);
+    return !!s && (msg.seq <= s.cursor || s.buffer.has(msg.seq));
+  }
+
   /** Returns the number of messages newly delivered as a result. */
   push(msg: ChatMessage): number {
     const s = this.states.get(msg.conversationId);

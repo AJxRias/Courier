@@ -11,6 +11,7 @@
     "migrate": "tsx src/migrate-cli.ts"
   },
   "dependencies": {
+    "@courier/client": "*",
     "@courier/protocol": "*",
     "@fastify/static": "^8.3.0",
     "fastify": "^5.2.0",
@@ -23,7 +24,6 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@courier/client": "*",
     "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.13",
     "tsup": "^8.3.5"

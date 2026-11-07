@@ -1,3 +1,5 @@
+import type { ChatMessage } from "@courier/client";
+
 export interface Session {
   token: string;
   user: { id: string; username: string };
@@ -8,6 +10,7 @@ export interface Session {
 export interface Member {
   id: string;
   username: string;
+  isBot: boolean;
   readSeq: number;
   deliveredSeq: number;
 }
@@ -23,11 +26,20 @@ export interface Conversation {
   lastMessage: { senderId: string; body: string; createdAt: string; seq: number } | null;
 }
 
+/**
+ * "Second user" tabs (opened with ?guest=1) keep their session in
+ * sessionStorage, so two tabs in one browser can be two different people.
+ */
+const params = new URLSearchParams(location.search);
+export const isGuestTab = params.has("guest");
+export const chatWithParam = params.get("with");
+export const tabStorage: Storage = isGuestTab ? sessionStorage : localStorage;
+
 const KEY = "courier.session";
 
 export function loadSession(): Session | null {
   try {
-    const s = JSON.parse(localStorage.getItem(KEY) ?? "null") as Session | null;
+    const s = JSON.parse(tabStorage.getItem(KEY) ?? "null") as Session | null;
     return s && s.expiresAt > Date.now() ? s : null;
   } catch {
     return null;
@@ -35,8 +47,8 @@ export function loadSession(): Session | null {
 }
 
 export function saveSession(s: Session | null): void {
-  if (s) localStorage.setItem(KEY, JSON.stringify(s));
-  else localStorage.removeItem(KEY);
+  if (s) tabStorage.setItem(KEY, JSON.stringify(s));
+  else tabStorage.removeItem(KEY);
 }
 
 export class ApiError extends Error {
@@ -66,6 +78,10 @@ export async function devLogin(username: string): Promise<Session> {
   return { token: r.token, user: r.user, expiresAt: Date.now() + r.expiresIn * 1000 };
 }
 
+export function guestName(): string {
+  return `guest_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export async function refresh(s: Session): Promise<Session> {
   const r = await request<{ token: string; expiresIn: number }>("/api/auth/refresh", { token: s.token, body: {} });
   return { ...s, token: r.token, expiresAt: Date.now() + r.expiresIn * 1000 };
@@ -78,12 +94,16 @@ export const api = {
   addMember: (token: string, id: string, username: string) =>
     request<{ added: boolean }>(`/api/conversations/${id}/members`, { token, body: { username } }),
   history: (token: string, id: string, before?: number) =>
-    request<import("@courier/client").ChatMessage[]>(
-      `/api/conversations/${id}/messages?limit=50${before ? `&before=${before}` : ""}`,
-      { token },
-    ),
+    request<ChatMessage[]>(`/api/conversations/${id}/messages?limit=50${before ? `&before=${before}` : ""}`, { token }),
   presence: (token: string, userIds: string[]) =>
     request<Record<string, boolean>>(`/api/presence?userIds=${userIds.join(",")}`, { token }),
   searchUsers: (token: string, q: string) =>
     request<{ id: string; username: string }[]>(`/api/users?q=${encodeURIComponent(q)}`, { token }),
+  startDemo: (token: string) => request<{ dm: string; room: string }>("/api/demo/start", { token, body: {} }),
 };
+
+/** Bots are named like "maya_bot"; show them as "maya". */
+export function displayName(m: { username: string; isBot?: boolean } | undefined): string {
+  if (!m) return "someone";
+  return m.isBot ? m.username.replace(/_bot$/, "") : m.username;
+}

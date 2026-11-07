@@ -18,6 +18,9 @@ services:
         value: render-1
       - key: STATIC_DIR
         value: apps/web/dist
+      # Guide and demo-room bots so a visitor arriving alone has someone to talk to.
+      - key: DEMO_BOTS
+        value: "true"
       # Demo login (username only) so visitors can try it. Replace with a real
       # identity provider before using this for anything beyond a demo.
       - key: ALLOW_DEV_LOGIN

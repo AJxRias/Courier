@@ -19,6 +19,8 @@ export interface Config {
   allowedOrigins: string[];
   /** If set, serve the built web app from this directory (single-service deploys). */
   staticDir: string | null;
+  /** Run the demo bots on this gateway (enable on one node only). */
+  demoBots: boolean;
   /** WebSocket ping interval; a socket that misses one pong is terminated. */
   heartbeatMs: number;
   /** Disconnect a client whose unsent buffer grows past this many bytes. */
@@ -66,6 +68,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
       ...(process.env.RENDER_EXTERNAL_URL ? [process.env.RENDER_EXTERNAL_URL.replace(/\/$/, "")] : []),
     ],
     staticDir: process.env.STATIC_DIR ?? null,
+    demoBots: process.env.DEMO_BOTS === "true",
     heartbeatMs: num("HEARTBEAT_MS", 25_000),
     maxBufferedBytes: num("MAX_BUFFERED_BYTES", 1024 * 1024),
     sendRatePerSec: num("SEND_RATE_PER_SEC", 10),

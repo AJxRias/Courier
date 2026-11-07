@@ -56,11 +56,16 @@ export function registerHttp(gw: Gateway): void {
   if (gw.config.allowDevLogin) {
     // Username-only login for demos and load tests. Swap for a real identity
     // provider (OIDC) in production; the rest of the system only sees JWTs.
-    app.post("/api/auth/dev-login", async (req) => {
+    app.post("/api/auth/dev-login", async (req, reply) => {
       const body = z.object({ username: z.string().transform((s) => s.trim().toLowerCase()).pipe(username) }).parse(req.body);
+      if (gw.demo?.isBotName(body.username) || (await gw.repo.isBotName(body.username))) {
+        return reply.code(403).send({ error: "that name belongs to a demo bot; pick another" });
+      }
       const user = await gw.repo.upsertUser(body.username);
       const token = await gw.auth.issue(user.id, user.username);
-      return { token, user, expiresIn: gw.config.tokenTtlSec };
+      // First sign-in gets a guide bot DM and a demo room, so nobody starts alone.
+      if (user.created && gw.demo) await gw.demo.onboard(user.id).catch((err) => gw.log.warn({ err }, "onboarding failed"));
+      return { token, user: { id: user.id, username: user.username }, expiresIn: gw.config.tokenTtlSec };
     });
   }
 
@@ -69,6 +74,12 @@ export function registerHttp(gw: Gateway): void {
     // would use a separate, revocable refresh token instead.
     const p = req.principal!;
     return { token: await gw.auth.issue(p.userId, p.username), expiresIn: gw.config.tokenTtlSec };
+  });
+
+  // Recreates the demo conversations for an existing user (idempotent).
+  app.post("/api/demo/start", { preHandler: authed }, async (req, reply) => {
+    if (!gw.demo) return reply.code(404).send({ error: "demo bots are not enabled on this server" });
+    return gw.demo.onboard(req.principal!.userId);
   });
 
   app.get("/api/me", { preHandler: authed }, async (req) => ({
@@ -101,6 +112,7 @@ export function registerHttp(gw: Gateway): void {
       })
       .parse(req.body);
     const users = await gw.repo.findUsersByName(body.members);
+    if (users.some((u) => u.isBot)) return reply.code(403).send({ error: "demo bots can't be added to conversations" });
     if (users.length !== new Set(body.members).size) {
       const found = new Set(users.map((u) => u.username));
       return reply.code(404).send({ error: `unknown users: ${body.members.filter((m) => !found.has(m)).join(", ")}` });
@@ -115,6 +127,7 @@ export function registerHttp(gw: Gateway): void {
     const body = z.object({ username }).parse(req.body);
     const [user] = await gw.repo.findUsersByName([body.username]);
     if (!user) return reply.code(404).send({ error: "unknown user" });
+    if (user.isBot) return reply.code(403).send({ error: "demo bots can't be added to conversations" });
     const added = await gw.repo.addMember(id, req.principal!.userId, user.id);
     if (added) await gw.announceMembers(id, [user.id]);
     return { added };
@@ -139,10 +152,12 @@ export function registerHttp(gw: Gateway): void {
       gw.log.warn({ root }, "STATIC_DIR has no index.html; not serving the web app");
       return;
     }
-    void app.register(fastifyStatic, { root, wildcard: false, index: ["index.html"] });
+    void app.register(fastifyStatic, { root, index: ["index.html"] });
     // Single-page app: unknown non-API GETs get index.html.
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !req.url.startsWith("/api/") && req.url !== "/ws") {
+      const path = req.url.split("?")[0]!;
+      // Paths that look like files (have an extension) are real 404s, not app routes.
+      if (req.method === "GET" && !path.startsWith("/api/") && path !== "/ws" && !/\.[a-z0-9]+$/i.test(path)) {
         return reply.sendFile("index.html", root);
       }
       return reply.code(404).send({ error: "not found" });

@@ -1,5 +1,22 @@
-import { ChatClient, localStorageStorage, type ChatMessage, type PendingSend, type Status } from "@courier/client";
-import { api, refresh, saveSession, type Conversation, type Session } from "./api";
+import {
+  ChatClient,
+  type ChatMessage,
+  type ClientStats,
+  type ClientStorage,
+  type FrameLogEntry,
+  type PendingSend,
+  type Snapshot,
+  type Status,
+} from "@courier/client";
+import { api, refresh, saveSession, tabStorage, type Conversation, type Session } from "./api";
+
+export interface LogLine extends FrameLogEntry {
+  id: number;
+}
+
+const LOG_LIMIT = 200;
+/** Frames too chatty to be worth showing in the log. */
+const QUIET = new Set(["ping", "pong"]);
 
 export interface ChatState {
   status: Status;
@@ -10,6 +27,9 @@ export interface ChatState {
   /** conversationId → userId → typing expiry (epoch ms) */
   typing: Record<string, Record<string, number>>;
   failed: { clientMsgId: string; conversationId: string; message: string }[];
+  log: LogLine[];
+  stats: ClientStats;
+  faults: { loss: boolean; duplicate: boolean };
   version: number;
 }
 
@@ -34,8 +54,14 @@ export class ChatStore {
     presence: {},
     typing: {},
     failed: [],
+    log: [],
+    stats: { delivered: 0, duplicatesIgnored: 0, gapRepairs: 0, resends: 0, reconnects: 0, droppedSimulated: 0 },
+    faults: { loss: false, duplicate: false },
     version: 0,
   };
+  private logSeq = 0;
+  private readTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private notifyQueued = false;
 
   constructor(session: Session, private onLogout: () => void) {
     this.session = session;
@@ -43,7 +69,7 @@ export class ChatStore {
     this.client = new ChatClient({
       url: `${proto}//${location.host}/ws`,
       getToken: () => this.freshToken(),
-      storage: localStorageStorage(`courier.client.${session.user.id}`),
+      storage: tabStore(`courier.client.${session.user.id}`),
       deviceId: deviceId(),
     });
 
@@ -79,6 +105,13 @@ export class ChatStore {
       setTimeout(() => this.bump(), 4100);
     });
     c.on("presence", ({ userId, online }) => this.set({ presence: { ...this.state.presence, [userId]: online } }));
+    c.on("frame", (entry) => {
+      if (QUIET.has(entry.frame.t)) return;
+      // Our own receipts echoing back just repeat the ack we sent.
+      if (entry.frame.t === "receipt" && entry.frame.userId === this.me) return;
+      const log = [...this.state.log, { ...entry, id: ++this.logSeq }];
+      this.set({ log: log.length > LOG_LIMIT ? log.slice(-LOG_LIMIT) : log, stats: c.stats });
+    });
 
     window.addEventListener("online", () => c.reconnectNow());
     document.addEventListener("visibilitychange", () => {
@@ -112,7 +145,13 @@ export class ChatStore {
 
   private set(patch: Partial<ChatState>) {
     this.state = { ...this.state, ...patch, version: this.state.version + 1 };
-    for (const l of this.listeners) l();
+    // Coalesce renders: a 100-message burst is one paint, not a hundred.
+    if (this.notifyQueued) return;
+    this.notifyQueued = true;
+    requestAnimationFrame(() => {
+      this.notifyQueued = false;
+      for (const l of this.listeners) l();
+    });
   }
 
   private bump() {
@@ -186,7 +225,14 @@ export class ChatStore {
     this.bump();
   }
 
+  /** Coalesces read receipts: a burst of 40 messages sends one ack, not 40. */
   markRead(conversationId: string): void {
+    clearTimeout(this.readTimers.get(conversationId));
+    this.readTimers.set(conversationId, setTimeout(() => this.flushRead(conversationId), 250));
+  }
+
+  private flushRead(conversationId: string): void {
+    this.readTimers.delete(conversationId);
     const conv = this.state.conversations.find((c) => c.id === conversationId);
     const last = Math.max(conv?.lastSeq ?? 0, ...(this.messages.get(conversationId)?.keys() ?? [0]));
     if (conv && last > conv.readSeq && document.visibilityState === "visible") {
@@ -205,6 +251,38 @@ export class ChatStore {
 
   goOnline(): void {
     this.client.connect();
+  }
+
+  dropConnection(): void {
+    this.client.dropConnection();
+  }
+
+  setFaults(faults: ChatState["faults"]): void {
+    this.client.setFaults({ dropRate: faults.loss ? 0.3 : 0, duplicate: faults.duplicate });
+    this.set({ faults });
+  }
+
+  clearLog(): void {
+    this.set({ log: [] });
+  }
+
+  async startDemo(): Promise<string> {
+    const { dm } = await api.startDemo(this.token);
+    await this.loadConversations();
+    return dm;
+  }
+
+  /** Opens another tab signed in as a new guest, already in a chat with this user. */
+  openSecondUser(): void {
+    window.open(`/?guest=1&with=${encodeURIComponent(this.username)}`, "_blank");
+  }
+
+  nameOf(userId: string): string {
+    for (const c of this.state.conversations) {
+      const m = c.members.find((x) => x.id === userId);
+      if (m) return m.isBot ? m.username.replace(/_bot$/, "") : m.username;
+    }
+    return userId === this.me ? this.username : "someone";
   }
 
   logout(): void {
@@ -263,7 +341,27 @@ export class ChatStore {
 }
 
 function deviceId(): string {
-  let id = localStorage.getItem("courier.device");
-  if (!id) localStorage.setItem("courier.device", (id = crypto.randomUUID().slice(0, 18)));
+  let id = tabStorage.getItem("courier.device");
+  if (!id) tabStorage.setItem("courier.device", (id = crypto.randomUUID().slice(0, 18)));
   return id;
+}
+
+/** Client cursors and offline queue, kept in the same storage as this tab's session. */
+function tabStore(key: string): ClientStorage {
+  return {
+    load() {
+      try {
+        return JSON.parse(tabStorage.getItem(key) ?? "null") as Snapshot | null;
+      } catch {
+        return null;
+      }
+    },
+    save(s) {
+      try {
+        tabStorage.setItem(key, JSON.stringify(s));
+      } catch {
+        // storage full or disabled: keep going in memory
+      }
+    },
+  };
 }

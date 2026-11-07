@@ -11,6 +11,7 @@ import { Bus } from "./bus.js";
 import type { Config } from "./config.js";
 import { Conn } from "./connection.js";
 import { createPool, migrate, type Db } from "./db.js";
+import { DemoBots } from "./demo.js";
 import { registerHttp } from "./http.js";
 import { createMetrics, type Metrics } from "./metrics.js";
 import { Presence } from "./presence.js";
@@ -48,6 +49,7 @@ export class Gateway {
   readonly metrics: Metrics;
   readonly http: FastifyInstance;
   readonly faults: Faults;
+  readonly demo: DemoBots | null;
 
   private wss: WebSocketServer;
   private conns = new Set<Conn>();
@@ -81,6 +83,7 @@ export class Gateway {
       maxPayload: LIMITS.maxFrameBytes,
       perMessageDeflate: false, // CPU-expensive per socket; chat frames are small anyway
     });
+    this.demo = this.config.demoBots ? new DemoBots(this) : null;
     this.http = Fastify({ logger: false, bodyLimit: 64 * 1024, trustProxy: true });
     registerHttp(this);
   }
@@ -98,6 +101,7 @@ export class Gateway {
     const addr = this.http.server.address();
     const port = typeof addr === "object" && addr ? addr.port : this.config.port;
 
+    if (this.demo) await this.demo.start(port);
     this.intervals.push(setInterval(() => this.heartbeat(), this.config.heartbeatMs));
     this.intervals.push(setInterval(() => void this.sweepOutbox(), this.config.outboxSweepMs));
     this.log.info({ port }, "gateway listening");
@@ -137,6 +141,7 @@ export class Gateway {
   }
 
   async stop(): Promise<void> {
+    this.demo?.stop();
     for (const i of this.intervals) clearInterval(i);
     this.intervals = [];
     for (const c of this.conns) c.ws.terminate();
@@ -152,6 +157,7 @@ export class Gateway {
    */
   async crash(): Promise<void> {
     this.crashed = true;
+    this.demo?.stop();
     for (const i of this.intervals) clearInterval(i);
     this.intervals = [];
     for (const c of this.conns) c.ws.terminate();

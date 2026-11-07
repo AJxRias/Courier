@@ -1,0 +1,77 @@
+# Full local stack: 2 gateways behind nginx, Postgres, Redis, Prometheus, Grafana.
+#
+#   docker compose -f deploy/docker-compose.yml up --build
+#
+# App:        http://localhost:8000
+# Grafana:    http://localhost:3000  (anonymous admin, "Courier" dashboard)
+# Prometheus: http://localhost:9090
+
+x-gateway: &gateway
+  build: { context: .., target: gateway }
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  environment: &gateway-env
+    DATABASE_URL: postgres://courier:courier@postgres:5432/courier
+    REDIS_URL: redis://redis:6379
+    JWT_SECRET: ${JWT_SECRET:-local-compose-secret-change-me-please-0123}
+    # Demo login is on so the stack is usable out of the box. Turn it off and
+    # plug in a real identity provider before exposing this anywhere.
+    ALLOW_DEV_LOGIN: "true"
+    ALLOWED_ORIGINS: http://localhost:8000
+  stop_grace_period: 20s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: courier
+      POSTGRES_PASSWORD: courier
+      POSTGRES_DB: courier
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U courier"]
+      interval: 2s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+  gw1:
+    <<: *gateway
+    environment: { <<: *gateway-env, NODE_ID: gw1 }
+
+  gw2:
+    <<: *gateway
+    environment: { <<: *gateway-env, NODE_ID: gw2 }
+
+  edge:
+    build: { context: .., target: edge }
+    depends_on: [gw1, gw2]
+    ports: ["8000:80"]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes: [./prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  pgdata:

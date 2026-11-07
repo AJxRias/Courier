@@ -1,0 +1,8 @@
+{
+  "name": "@courier/loadtest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "tsx --max-old-space-size=4096 run.ts" },
+  "dependencies": { "@courier/client": "*", "@courier/protocol": "*", "ws": "^8.18.0" }
+}

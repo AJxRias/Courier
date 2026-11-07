@@ -1,0 +1,19 @@
+{
+  "name": "courier",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*", "loadtest"],
+  "scripts": {
+    "dev": "npm run dev -w @courier/server",
+    "build": "npm run build -w @courier/server && npm run build -w @courier/web",
+    "typecheck": "tsc -p packages/server && tsc -p packages/client && tsc -p apps/web && tsc -p loadtest",
+    "test": "vitest run",
+    "migrate": "npm run migrate -w @courier/server",
+    "loadtest": "npm run start -w @courier/loadtest --"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

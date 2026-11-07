@@ -1,0 +1,35 @@
+{
+  "date": "2026-11-07T11:32:35.763Z",
+  "machine": {
+    "cpus": 2,
+    "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "memGB": 8
+  },
+  "config": {
+    "users": 5000,
+    "roomSize": 10,
+    "rooms": 500,
+    "ratePerSec": 300,
+    "durationSec": 40,
+    "gateways": 2,
+    "killAtSec": 20
+  },
+  "sent": 10446,
+  "deliveries": 94014,
+  "latencyMs": {
+    "p50": 29,
+    "p95": 524,
+    "p99": 3751,
+    "max": 7018
+  },
+  "correctness": {
+    "missing": 0,
+    "duplicates": 0,
+    "outOfOrder": 0,
+    "unackedSends": 0,
+    "sendFailures": 0
+  },
+  "reconnects": 2500,
+  "killedAtSec": 20.006,
+  "convergeMs": 209
+}
